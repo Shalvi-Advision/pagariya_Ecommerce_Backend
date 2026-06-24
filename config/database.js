@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const connectDB = async () => {
   try {
-    const conn = await mongoose.connect(process.env.MONGODB_URI || 'mongodb+srv://gauravpawar904_patel:xBAquzKNZCcp88kG@cluster0.ufhe8af.mongodb.net/Patel_Test_v2?retryWrites=true&w=majority&appName=Cluster0');
+    const conn = await mongoose.connect(process.env.MONGODB_URI || 'mongodb+srv://gauravpawar904_patel:xBAquzKNZCcp88kG@cluster0.ufhe8af.mongodb.net/Pagariya_DB?retryWrites=true&w=majority&appName=Cluster0');
 
     console.log(`MongoDB Connected: ${conn.connection.host}`);
     console.log(`Database: ${conn.connection.name}`);
