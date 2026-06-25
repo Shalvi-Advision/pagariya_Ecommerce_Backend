@@ -1,7 +1,7 @@
 /**
  * Migration script: Set up RBAC permissions for existing admin users.
  *
- * - Gaurav Pawar (8108053372) → isSuperAdmin with full permissions
+ * - Super admins (8108053372, 9773443190) → isSuperAdmin with full permissions
  * - All other admins → view-only permissions across all sections
  *
  * Idempotent: safe to re-run.
@@ -12,7 +12,7 @@
 const { connectDB, disconnectDB } = require('./config/database');
 const User = require('./models/User');
 
-const SUPER_ADMIN_MOBILE = '8108053372';
+const SUPER_ADMIN_MOBILES = ['8108053372', '9773443190'];
 
 const fullPermissions = {
   dashboard:      { view: true },
@@ -43,7 +43,7 @@ async function migrate() {
   console.log(`Found ${admins.length} admin user(s)\n`);
 
   for (const admin of admins) {
-    const isSuperAdmin = admin.mobile === SUPER_ADMIN_MOBILE;
+    const isSuperAdmin = SUPER_ADMIN_MOBILES.includes(admin.mobile);
     const permissions = isSuperAdmin ? fullPermissions : viewOnlyPermissions;
 
     admin.isSuperAdmin = isSuperAdmin;
