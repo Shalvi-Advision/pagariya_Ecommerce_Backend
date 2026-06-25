@@ -1,6 +1,8 @@
 require('dotenv').config();
 
+const fs = require('fs');
 const http = require('http');
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -12,6 +14,7 @@ const jwt = require('jsonwebtoken');
 const User = require('./models/User');
 
 const { connectDB } = require('./config/database');
+const { UPLOAD_ROOT } = require('./config/mediaStorage');
 const errorHandler = require('./middleware/errorHandler');
 const notFound = require('./middleware/notFound');
 
@@ -206,6 +209,13 @@ if (process.env.NODE_ENV === 'development') {
 
 // Suppress favicon requests
 app.get('/favicon.ico', (req, res) => res.status(204).end());
+
+// Local media (dev fallback; production is served by nginx at /media/)
+fs.mkdirSync(UPLOAD_ROOT, { recursive: true });
+app.use('/media', express.static(UPLOAD_ROOT, {
+  maxAge: '30d',
+  immutable: true,
+}));
 
 // Health check route
 app.get('/health', (req, res) => {

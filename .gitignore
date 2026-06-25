@@ -142,6 +142,7 @@ Database/
 postman/
 
 # Upload data and processed files
+uploads/
 *.json.backup
 
 # Test results
