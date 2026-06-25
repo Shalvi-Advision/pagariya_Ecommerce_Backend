@@ -74,6 +74,36 @@ const offerRoutes = require('./routes/offers');
 const app = express();
 const PORT = process.env.PORT || 5001;
 
+// Behind nginx — use real client IP for rate limiting
+app.set('trust proxy', 1);
+
+const parseRateLimitSkipIps = () => {
+  const raw = process.env.RATE_LIMIT_SKIP_IPS || '';
+  return new Set(
+    raw
+      .split(',')
+      .map((ip) => ip.trim())
+      .filter(Boolean)
+  );
+};
+
+const rateLimitSkipIps = parseRateLimitSkipIps();
+
+const getClientIp = (req) => {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded.length > 0) {
+    return forwarded.split(',')[0].trim();
+  }
+  return req.ip;
+};
+
+const shouldSkipRateLimit = (req) => {
+  if (rateLimitSkipIps.size === 0) {
+    return false;
+  }
+  return rateLimitSkipIps.has(getClientIp(req));
+};
+
 // Security middleware
 app.use(helmet());
 
@@ -146,15 +176,17 @@ const authLimiter = rateLimit({
   max: 1000, // limit each IP to 1000 requests per windowMs for auth routes
   message: {
     error: 'Too many authentication attempts, please try again later.'
-  }
+  },
+  skip: shouldSkipRateLimit,
 });
 
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 1500, // limit each IP to 1000 requests per windowMs for general routes
+  max: 1500, // limit each IP to 1500 requests per windowMs for general routes
   message: {
     error: 'Too many requests from this IP, please try again later.'
-  }
+  },
+  skip: shouldSkipRateLimit,
 });
 
 // Apply general rate limiting to all routes
