@@ -108,68 +108,145 @@ const isValidCoordinate = (lat, lon) => {
   );
 };
 
+const normalizeSlabs = (slabs = []) => {
+  if (!Array.isArray(slabs)) return [];
+
+  return slabs
+    .map((slab) => ({
+      from_km: Math.max(0, Number(slab.from_km) || 0),
+      to_km: slab.to_km == null || slab.to_km === '' ? null : Number(slab.to_km),
+      per_km_charge: Math.max(0, Number(slab.per_km_charge) || 0),
+    }))
+    .filter((slab) => slab.per_km_charge >= 0)
+    .sort((a, b) => a.from_km - b.from_km);
+};
+
+/**
+ * Charge for distance beyond base_distance using slab rates.
+ * Slab from_km/to_km are measured from the start of chargeable (extra) distance.
+ */
+const calculateSlabDistanceCharge = (extraKm, slabs, fallbackPerKm) => {
+  if (extraKm <= 0) return 0;
+
+  const normalized = normalizeSlabs(slabs);
+  if (!normalized.length) {
+    return extraKm * fallbackPerKm;
+  }
+
+  let total = 0;
+  let coveredUntil = 0;
+
+  for (const slab of normalized) {
+    if (coveredUntil >= extraKm) break;
+
+    if (slab.from_km > coveredUntil) {
+      const gapEnd = Math.min(slab.from_km, extraKm);
+      total += (gapEnd - coveredUntil) * fallbackPerKm;
+      coveredUntil = gapEnd;
+    }
+
+    const slabEnd = slab.to_km == null ? extraKm : Math.min(slab.to_km, extraKm);
+    const slabStart = Math.max(slab.from_km, coveredUntil);
+    if (slabEnd > slabStart) {
+      total += (slabEnd - slabStart) * slab.per_km_charge;
+      coveredUntil = slabEnd;
+    }
+  }
+
+  if (coveredUntil < extraKm) {
+    total += (extraKm - coveredUntil) * fallbackPerKm;
+  }
+
+  return total;
+};
+
+const buildStoreDeliveryConfig = (store = {}) => ({
+  free_delivery_threshold: store.free_delivery_threshold ?? 6000,
+  free_delivery_radius_km: store.free_delivery_radius_km ?? 0,
+  max_delivery_radius_km: store.max_delivery_radius_km ?? 50,
+  base_charge: store.delivery_base_charge ?? 30,
+  per_km_charge: store.delivery_per_km_charge ?? 5,
+  base_distance_km: store.delivery_base_distance_km ?? 3,
+  distance_slabs: normalizeSlabs(store.delivery_distance_slabs),
+  handling_fee: store.handling_fee ?? 0,
+  package_fee: store.package_fee ?? 0,
+});
+
 /**
  * Calculate delivery charges based on distance and order amount.
- * Business rules:
- * - Free delivery for orders above a threshold (configurable per store, default ₹500)
- * - Distance-based tiers for delivery fee
- *
- * @param {number} distanceKm - Distance in km
- * @param {number} orderAmount - Order total in ₹
- * @param {object} storeConfig - Store-specific delivery config (optional)
- * @returns {{deliveryCharge: number, freeDeliveryEligible: boolean, reason: string}}
+ * Supports flat per-km rate or distance slabs, plus handling & package fees.
  */
 const calculateDeliveryCharge = (distanceKm, orderAmount, storeConfig = {}) => {
   const {
-    free_delivery_threshold = 6000,  // Free delivery above this order amount
-    free_delivery_radius_km = 0,     // Free delivery within this radius (0 = disabled)
-    max_delivery_radius_km = 50,     // Max delivery distance
-    base_charge = 30,                // Base delivery fee
-    per_km_charge = 5,               // Per km charge after base distance
-    base_distance_km = 3             // Distance covered by base charge
+    free_delivery_threshold = 6000,
+    free_delivery_radius_km = 0,
+    max_delivery_radius_km = 50,
+    base_charge = 30,
+    per_km_charge = 5,
+    base_distance_km = 3,
+    distance_slabs = [],
+    handling_fee = 0,
+    package_fee = 0,
   } = storeConfig;
 
-  // Beyond max delivery radius
+  const handlingFee = Math.max(0, Number(handling_fee) || 0);
+  const packageFee = Math.max(0, Number(package_fee) || 0);
+
   if (distanceKm > max_delivery_radius_km) {
     return {
       deliveryCharge: -1,
+      distanceCharge: 0,
+      handlingFee,
+      packageFee,
+      totalCharges: 0,
       freeDeliveryEligible: false,
-      reason: `Delivery not available beyond ${max_delivery_radius_km} km`
+      reason: `Delivery not available beyond ${max_delivery_radius_km} km`,
     };
   }
 
-  // Free delivery for high-value orders
-  if (orderAmount >= free_delivery_threshold) {
-    return {
-      deliveryCharge: 0,
-      freeDeliveryEligible: true,
-      reason: `Free delivery for orders above ₹${free_delivery_threshold}`
-    };
+  const orderQualifiesForFreeDelivery = orderAmount >= free_delivery_threshold;
+  const withinFreeRadius = distanceKm <= free_delivery_radius_km;
+
+  let distanceCharge = 0;
+  let freeDeliveryEligible = false;
+  let reason = '';
+
+  if (orderQualifiesForFreeDelivery) {
+    freeDeliveryEligible = true;
+    reason = `Free delivery for orders above ₹${free_delivery_threshold}`;
+  } else if (withinFreeRadius) {
+    freeDeliveryEligible = true;
+    reason = `Free delivery within ${free_delivery_radius_km} km`;
+  } else {
+    const extraDistance = Math.max(0, distanceKm - base_distance_km);
+    const variableCharge = calculateSlabDistanceCharge(extraDistance, distance_slabs, per_km_charge);
+    distanceCharge = Math.round(base_charge + variableCharge);
+
+    if (distance_slabs.length > 0) {
+      reason = `₹${base_charge} base + slab rates for ${extraDistance.toFixed(1)} km beyond ${base_distance_km} km`;
+    } else {
+      reason = `₹${base_charge} base + ₹${per_km_charge}/km for ${extraDistance.toFixed(1)} km extra`;
+    }
   }
 
-  // Free delivery within radius
-  if (distanceKm <= free_delivery_radius_km) {
-    return {
-      deliveryCharge: 0,
-      freeDeliveryEligible: true,
-      reason: `Free delivery within ${free_delivery_radius_km} km`
-    };
-  }
-
-  // Calculate distance-based charge
-  const extraDistance = Math.max(0, distanceKm - base_distance_km);
-  const charge = Math.round(base_charge + (extraDistance * per_km_charge));
+  const totalCharges = Math.round(distanceCharge + handlingFee + packageFee);
 
   return {
-    deliveryCharge: charge,
-    freeDeliveryEligible: false,
-    reason: `₹${base_charge} base + ₹${per_km_charge}/km for ${extraDistance.toFixed(1)} km extra`
+    deliveryCharge: totalCharges,
+    distanceCharge,
+    handlingFee,
+    packageFee,
+    totalCharges,
+    freeDeliveryEligible,
+    reason,
   };
 };
 
 module.exports = {
   calculateDistance,
   calculateDeliveryCharge,
+  buildStoreDeliveryConfig,
+  calculateSlabDistanceCharge,
   haversineDistance,
-  isValidCoordinate
+  isValidCoordinate,
 };

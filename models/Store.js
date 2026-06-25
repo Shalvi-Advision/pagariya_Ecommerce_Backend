@@ -82,6 +82,55 @@ const storeSchema = new mongoose.Schema({
   whatsappnumber: {
     type: String,
     trim: true
+  },
+  // Delivery fee configuration (per store)
+  free_delivery_threshold: {
+    type: Number,
+    default: 6000,
+    min: [0, 'Free delivery threshold cannot be negative']
+  },
+  free_delivery_radius_km: {
+    type: Number,
+    default: 0,
+    min: [0, 'Free delivery radius cannot be negative']
+  },
+  max_delivery_radius_km: {
+    type: Number,
+    default: 50,
+    min: [0, 'Max delivery radius cannot be negative']
+  },
+  delivery_base_charge: {
+    type: Number,
+    default: 30,
+    min: [0, 'Base delivery charge cannot be negative']
+  },
+  delivery_base_distance_km: {
+    type: Number,
+    default: 3,
+    min: [0, 'Base distance cannot be negative']
+  },
+  delivery_per_km_charge: {
+    type: Number,
+    default: 5,
+    min: [0, 'Per km charge cannot be negative']
+  },
+  delivery_distance_slabs: {
+    type: [{
+      from_km: { type: Number, required: true, min: 0 },
+      to_km: { type: Number, default: null },
+      per_km_charge: { type: Number, required: true, min: 0 }
+    }],
+    default: []
+  },
+  handling_fee: {
+    type: Number,
+    default: 0,
+    min: [0, 'Handling fee cannot be negative']
+  },
+  package_fee: {
+    type: Number,
+    default: 0,
+    min: [0, 'Package fee cannot be negative']
   }
 }, {
   timestamps: true,

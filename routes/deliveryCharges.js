@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Store = require('../models/Store');
-const { calculateDistance, calculateDeliveryCharge, isValidCoordinate } = require('../utils/distanceCalculation');
+const { calculateDistance, calculateDeliveryCharge, buildStoreDeliveryConfig, isValidCoordinate } = require('../utils/distanceCalculation');
 
 // @route   POST /api/delivery-charges/calculate
 // @desc    Calculate delivery distance and charges
@@ -56,15 +56,7 @@ router.post('/calculate', async (req, res) => {
     // Calculate distance (OSRM road distance with Haversine fallback)
     const distanceResult = await calculateDistance(addrLat, addrLon, storeLat, storeLon);
 
-    // Build store delivery config from store data (use defaults if not set)
-    const storeConfig = {
-      free_delivery_threshold: store.free_delivery_threshold || 6000,
-      free_delivery_radius_km: store.free_delivery_radius_km || 0,
-      max_delivery_radius_km: store.max_delivery_radius_km || 50,
-      base_charge: store.delivery_base_charge || 30,
-      per_km_charge: store.delivery_per_km_charge || 5,
-      base_distance_km: store.delivery_base_distance_km || 3
-    };
+    const storeConfig = buildStoreDeliveryConfig(store);
 
     // Calculate delivery charge
     const chargeResult = calculateDeliveryCharge(
@@ -72,6 +64,13 @@ router.post('/calculate', async (req, res) => {
       parseFloat(order_amount) || 0,
       storeConfig
     );
+
+    const feeBreakdown = {
+      distance_charge: chargeResult.distanceCharge || 0,
+      handling_fee: chargeResult.handlingFee || 0,
+      package_fee: chargeResult.packageFee || 0,
+      total_charges: chargeResult.totalCharges || 0,
+    };
 
     // Check if delivery is not available (beyond max radius)
     if (chargeResult.deliveryCharge === -1) {
@@ -83,6 +82,7 @@ router.post('/calculate', async (req, res) => {
           duration_minutes: parseFloat(distanceResult.duration.toFixed(0)),
           is_road_distance: distanceResult.isRoadDistance,
           delivery_charge: 0,
+          ...feeBreakdown,
           free_delivery: false,
           reason: chargeResult.reason
         }
@@ -96,7 +96,8 @@ router.post('/calculate', async (req, res) => {
         distance_km: parseFloat(distanceResult.distance.toFixed(1)),
         duration_minutes: parseFloat(distanceResult.duration.toFixed(0)),
         is_road_distance: distanceResult.isRoadDistance,
-        delivery_charge: chargeResult.deliveryCharge,
+        delivery_charge: chargeResult.totalCharges,
+        ...feeBreakdown,
         free_delivery: chargeResult.freeDeliveryEligible,
         reason: chargeResult.reason,
         store_coordinates: {
