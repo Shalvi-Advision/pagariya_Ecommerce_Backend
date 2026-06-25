@@ -11,6 +11,23 @@ const createPerm = checkPermission('ecommerce', 'create');
 const editPerm = checkPermission('ecommerce', 'edit');
 const deletePerm = checkPermission('ecommerce', 'delete');
 
+const buildDepartmentNameMap = async (deptIds = []) => {
+  const uniqueIds = [...new Set(deptIds.filter(Boolean))];
+  if (uniqueIds.length === 0) {
+    return {};
+  }
+
+  const departments = await Department.find({ department_id: { $in: uniqueIds } })
+    .select('department_id department_name');
+
+  return departments.reduce((acc, dept) => {
+    acc[dept.department_id] = dept.department_name;
+    return acc;
+  }, {});
+};
+
+const buildSearchRegex = (search) => ({ $regex: search.trim(), $options: 'i' });
+
 // ==================== CATEGORY MANAGEMENT ====================
 
 // @route   GET /api/admin/categories
@@ -32,7 +49,12 @@ router.get('/', viewPerm, async (req, res) => {
     const query = {};
 
     if (search) {
-      query.category_name = { $regex: search, $options: 'i' };
+      const searchRegex = buildSearchRegex(search);
+      query.$or = [
+        { category_name: searchRegex },
+        { idcategory_master: searchRegex },
+        { dept_id: searchRegex },
+      ];
     }
 
     if (storeCode) {
@@ -106,7 +128,12 @@ router.post('/by-store', viewPerm, async (req, res) => {
     };
 
     if (search) {
-      query.category_name = { $regex: search, $options: 'i' };
+      const searchRegex = buildSearchRegex(search);
+      query.$or = [
+        { category_name: searchRegex },
+        { idcategory_master: searchRegex },
+        { dept_id: searchRegex },
+      ];
     }
 
     if (deptId) {
@@ -124,12 +151,18 @@ router.post('/by-store', viewPerm, async (req, res) => {
       .limit(parseInt(limit))
       .skip(skip);
 
+    const deptNameMap = await buildDepartmentNameMap(categories.map((cat) => cat.dept_id));
+    const enrichedCategories = categories.map((cat) => ({
+      ...cat.toObject(),
+      department_name: deptNameMap[cat.dept_id] || '',
+    }));
+
     // Get total count for pagination
     const total = await Category.countDocuments(query);
 
     res.status(200).json({
       success: true,
-      data: categories,
+      data: enrichedCategories,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -279,7 +312,12 @@ router.get('/departments/all', viewPerm, async (req, res) => {
     const query = {};
 
     if (search) {
-      query.department_name = { $regex: search, $options: 'i' };
+      const searchRegex = buildSearchRegex(search);
+      query.$or = [
+        { department_name: searchRegex },
+        { department_id: searchRegex },
+        { dept_type_id: searchRegex },
+      ];
     }
 
     if (storeCode) {
@@ -469,7 +507,12 @@ router.post('/departments/by-store', viewPerm, async (req, res) => {
     }
 
     if (search) {
-      query.department_name = { $regex: search, $options: 'i' };
+      const searchRegex = buildSearchRegex(search);
+      query.$or = [
+        { department_name: searchRegex },
+        { department_id: searchRegex },
+        { dept_type_id: searchRegex },
+      ];
     }
 
     if (deptTypeId) {
@@ -597,8 +640,12 @@ router.post('/subcategories/by-store', viewPerm, async (req, res) => {
     // Build query - subcategories don't have store_code directly
     // We need to get categories for this store_code first, then get subcategories
     const categoryQuery = { store_code: store_code.trim() };
-    const categories = await Category.find(categoryQuery).select('idcategory_master');
-    const categoryIds = categories.map(cat => cat.idcategory_master);
+    const storeCategories = await Category.find(categoryQuery).select('idcategory_master dept_id');
+    const categoryIds = storeCategories.map((cat) => cat.idcategory_master);
+    const categoryDeptMap = storeCategories.reduce((acc, cat) => {
+      acc[cat.idcategory_master] = cat.dept_id;
+      return acc;
+    }, {});
 
     const query = {};
 
@@ -620,11 +667,26 @@ router.post('/subcategories/by-store', viewPerm, async (req, res) => {
     }
 
     if (search) {
-      query.subcategory_name = { $regex: search, $options: 'i' };
+      const searchRegex = buildSearchRegex(search);
+      query.$and = [
+        { category_id: query.category_id },
+        {
+          $or: [
+            { sub_category_name: searchRegex },
+            { idsub_category_master: searchRegex },
+            { main_category_name: searchRegex },
+            { category_id: searchRegex },
+          ],
+        },
+      ];
+      delete query.category_id;
     }
 
     if (categoryId) {
       query.category_id = categoryId;
+      if (query.$and) {
+        query.$and[0].category_id = categoryId;
+      }
     }
 
     // Build sort object
@@ -638,12 +700,23 @@ router.post('/subcategories/by-store', viewPerm, async (req, res) => {
       .limit(parseInt(limit))
       .skip(skip);
 
+    const deptNameMap = await buildDepartmentNameMap(
+      subcategories.map((sub) => categoryDeptMap[sub.category_id])
+    );
+    const enrichedSubcategories = subcategories.map((sub) => {
+      const deptId = categoryDeptMap[sub.category_id];
+      return {
+        ...sub.toObject(),
+        department_name: deptNameMap[deptId] || '',
+      };
+    });
+
     // Get total count for pagination
     const total = await Subcategory.countDocuments(query);
 
     res.status(200).json({
       success: true,
-      data: subcategories,
+      data: enrichedSubcategories,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
