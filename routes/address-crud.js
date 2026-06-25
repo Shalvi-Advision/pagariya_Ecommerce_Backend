@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const AddressBook = require('../models/AddressBook');
 const { protect } = require('../middleware/auth');
+const { resolveAddressCoordinates, validatePincodeDistance } = require('../utils/geocoding');
 
 /**
  * @route   POST /api/addresses/add-address
@@ -92,6 +93,34 @@ router.post('/add-address', protect, async (req, res, next) => {
       );
     }
 
+    // Resolve and validate coordinates
+    const resolved = await resolveAddressCoordinates({
+      latitude,
+      longitude,
+      delivery_addr_line_1,
+      delivery_addr_city,
+      delivery_addr_pincode,
+    });
+
+    if (!resolved) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid delivery location is required. Please confirm your location on the map.',
+      });
+    }
+
+    const pinCheck = await validatePincodeDistance(
+      resolved.latitude,
+      resolved.longitude,
+      delivery_addr_pincode.trim()
+    );
+    if (!pinCheck.ok) {
+      return res.status(400).json({
+        success: false,
+        error: pinCheck.warning,
+      });
+    }
+
     // Create new address
     const newAddress = new AddressBook({
       idaddress_book: nextId,
@@ -103,8 +132,8 @@ router.post('/add-address', protect, async (req, res, next) => {
       delivery_addr_city: delivery_addr_city.trim(),
       delivery_addr_pincode: delivery_addr_pincode.trim(),
       is_default: is_default || 'No',
-      latitude: latitude ? latitude.trim() : '',
-      longitude: longitude ? longitude.trim() : '',
+      latitude: String(resolved.latitude),
+      longitude: String(resolved.longitude),
       area_id: area_id ? area_id.trim() : ''
     });
     
@@ -209,6 +238,39 @@ router.put('/update-address/:id', protect, async (req, res, next) => {
       );
     }
     
+    const line1 = delivery_addr_line_1 || address.delivery_addr_line_1;
+    const city = delivery_addr_city || address.delivery_addr_city;
+    const pincode = delivery_addr_pincode || address.delivery_addr_pincode;
+    const latInput = latitude !== undefined ? latitude : address.latitude;
+    const lonInput = longitude !== undefined ? longitude : address.longitude;
+
+    const resolved = await resolveAddressCoordinates({
+      latitude: latInput,
+      longitude: lonInput,
+      delivery_addr_line_1: line1,
+      delivery_addr_city: city,
+      delivery_addr_pincode: pincode,
+    });
+
+    if (!resolved) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid delivery location is required. Please confirm your location on the map.',
+      });
+    }
+
+    const pinCheck = await validatePincodeDistance(
+      resolved.latitude,
+      resolved.longitude,
+      pincode
+    );
+    if (!pinCheck.ok) {
+      return res.status(400).json({
+        success: false,
+        error: pinCheck.warning,
+      });
+    }
+
     // Update address fields
     const updateData = {};
     if (full_name) updateData.full_name = full_name.trim();
@@ -218,8 +280,8 @@ router.put('/update-address/:id', protect, async (req, res, next) => {
     if (delivery_addr_city) updateData.delivery_addr_city = delivery_addr_city.trim();
     if (delivery_addr_pincode) updateData.delivery_addr_pincode = delivery_addr_pincode.trim();
     if (is_default) updateData.is_default = is_default;
-    if (latitude !== undefined) updateData.latitude = latitude.trim();
-    if (longitude !== undefined) updateData.longitude = longitude.trim();
+    updateData.latitude = String(resolved.latitude);
+    updateData.longitude = String(resolved.longitude);
     if (area_id !== undefined) updateData.area_id = area_id.trim();
     
     const updatedAddress = await AddressBook.findByIdAndUpdate(
