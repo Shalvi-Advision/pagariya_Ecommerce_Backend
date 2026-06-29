@@ -21,6 +21,10 @@ const subcategorySchema = new mongoose.Schema({
     required: [true, 'Main category name is required'],
     trim: true
   },
+  image_link: {
+    type: String,
+    trim: true
+  },
   project_code: {
     type: String,
     trim: true
