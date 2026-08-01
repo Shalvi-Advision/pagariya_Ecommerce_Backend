@@ -11,6 +11,35 @@ const { protect } = require('../middleware/auth');
 const { createOrderPlacedNotification } = require('../utils/notificationService');
 
 /**
+ * Only prepaid orders are accepted, so Cash/Pay on Delivery modes are rejected
+ * even if a store still has one enabled in its configuration.
+ */
+const isCashOnDeliveryMode = (paymentModeName) => {
+  if (!paymentModeName) return false;
+
+  const normalized = paymentModeName.trim().toLowerCase();
+  return (
+    normalized === 'pod' ||
+    normalized === 'cod' ||
+    normalized.includes('cash on delivery') ||
+    normalized.includes('pay on delivery')
+  );
+};
+
+/**
+ * An order may only be created once the online payment has actually gone through.
+ */
+const hasOnlinePaymentProof = (paymentDetails) => {
+  if (!paymentDetails) return false;
+
+  return Boolean(
+    paymentDetails.razorpay_payment_id ||
+    paymentDetails.transaction_id ||
+    paymentDetails.payment_status === 'completed'
+  );
+};
+
+/**
  * @route   POST /api/orders/place-order
  * @desc    Place a new order with validated cart, delivery, and payment information
  * @access  Private (requires JWT token)
@@ -134,6 +163,22 @@ router.post('/place-order', protect, async (req, res, next) => {
       return res.status(400).json({
         success: false,
         error: 'Invalid payment mode or payment mode not available'
+      });
+    }
+
+    // Only prepaid orders are accepted - reject Cash on Delivery / Pay on Delivery
+    if (isCashOnDeliveryMode(paymentMode.payment_mode_name)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Cash on Delivery is not available. Please pay online to place your order.'
+      });
+    }
+
+    // Guard against a prepaid mode being sent without any proof of payment
+    if (!hasOnlinePaymentProof(payment_details)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Online payment is required before placing the order.'
       });
     }
 

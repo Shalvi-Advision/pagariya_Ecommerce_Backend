@@ -1,6 +1,12 @@
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 
+if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+  console.error(
+    '❌ RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET are not set. Online payments will fail.'
+  );
+}
+
 // Initialize Razorpay instance
 const instance = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
@@ -39,6 +45,9 @@ const createOrder = async (req, res) => {
       amount: order.amount,
       currency: order.currency,
       receipt: order.receipt,
+      // Returned so checkout always opens with the key that created this order.
+      // A key/order mismatch breaks the checkout UPI QR.
+      key_id: process.env.RAZORPAY_KEY_ID,
     });
   } catch (error) {
     console.error('Razorpay order creation error:', error);
